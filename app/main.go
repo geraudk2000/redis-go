@@ -41,6 +41,7 @@ func main() {
 			conn.Write([]byte("+PONG\r\n"))
 		} else {
 			conn.Write([]byte("-ERR unknow command\r\n"))
+
 		}
 	}
 
