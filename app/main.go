@@ -40,8 +40,8 @@ func main() {
 		if strings.ToUpper(line) == "PING" {
 			conn.Write([]byte("+PONG\r\n"))
 		} else {
-			conn.Write([]byte("-ERR unknow command\r\n"))
-
+			//conn.Write([]byte("-ERR unknow command\r\n"))
+			//fmt.Println("Error reading connection: ", err.Error())
 		}
 	}
 
