@@ -47,6 +47,7 @@ func parseResp(reader *bufio.Reader) ([]string, error) {
 func handleConcurrent(conn net.Conn) {
 	defer conn.Close()
 
+	var store = make(map[string]string)
 	reader := bufio.NewReader(conn)
 
 	for {
@@ -70,6 +71,29 @@ func handleConcurrent(conn net.Conn) {
 				conn.Write([]byte("-ERR wrong number of arguments for 'echo' command\r\n"))
 
 			}
+		case "GET":
+			if len(tokens) < 2 {
+				conn.Write([]byte("-ERR wrong number of arguments for 'GET'\r\n"))
+				return
+			}
+			key := tokens[1]
+			val, exists := store[key]
+			if !exists {
+				conn.Write([]byte("$-1\r\n"))
+				return
+			}
+			response := fmt.Sprintf("$%d\r\n%s\r\n", len(val), val)
+			conn.Write([]byte(response))
+		case "SET":
+			if len(tokens) < 3 {
+				conn.Write([]byte("-ERR wrong number of arguments for 'SET'\r\n"))
+				return
+			}
+			key := tokens[1]
+			val := tokens[2]
+			store[key] = val
+			conn.Write([]byte("+OK\r\n"))
+
 		default:
 			conn.Write([]byte("-ERR unknown command\r\n"))
 		}
