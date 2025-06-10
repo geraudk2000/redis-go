@@ -5,8 +5,44 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 )
+
+func parseResp(reader *bufio.Reader) ([]string, error) {
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return nil, err
+	}
+	line = strings.TrimSpace(line)
+	fmt.Println(line)
+	if !strings.HasPrefix(line, "*") {
+		return nil, fmt.Errorf("invalid RESP array: %s", line)
+	}
+
+	numElemts, err := strconv.Atoi(line[1:])
+	if err != nil {
+		return nil, fmt.Errorf("invalid array length: %s", line)
+	}
+
+	tokens := make([]string, 0, numElemts)
+
+	for i := 0; i < numElemts; i++ {
+		_, err := reader.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+		// read the actual value
+		value, err := reader.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+		tokens = append(tokens, strings.TrimSpace(value))
+	}
+
+	return tokens, nil
+
+}
 
 func handleConcurrent(conn net.Conn) {
 	defer conn.Close()
@@ -14,13 +50,28 @@ func handleConcurrent(conn net.Conn) {
 	reader := bufio.NewReader(conn)
 
 	for {
-		line, err := reader.ReadString('\n')
+		tokens, err := parseResp(reader)
 		if err != nil {
-			break
+			return
 		}
-		line = strings.TrimSpace(line)
-		if strings.ToUpper(line) == "PING" {
+		if len(tokens) == 0 {
+			continue
+		}
+		//fmt.Println(tokens)
+		switch strings.ToUpper(tokens[0]) {
+		case "PING":
 			conn.Write([]byte("+PONG\r\n"))
+		case "ECHO":
+			if len(tokens) >= 2 {
+				arg := tokens[1]
+				response := fmt.Sprintf("$%d\r\n%s\r\n", len(arg), arg)
+				conn.Write([]byte(response))
+			} else {
+				conn.Write([]byte("-ERR wrong number of arguments for 'echo' command\r\n"))
+
+			}
+		default:
+			conn.Write([]byte("-ERR unknown command\r\n"))
 		}
 	}
 
