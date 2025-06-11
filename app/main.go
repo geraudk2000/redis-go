@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func parseResp(reader *bufio.Reader) ([]string, error) {
@@ -48,6 +49,7 @@ func handleConcurrent(conn net.Conn) {
 	defer conn.Close()
 
 	var store = make(map[string]string)
+	var expiries = make(map[string]time.Time)
 	reader := bufio.NewReader(conn)
 
 	for {
@@ -77,6 +79,16 @@ func handleConcurrent(conn net.Conn) {
 				return
 			}
 			key := tokens[1]
+
+			if expiry, exists := expiries[key]; exists {
+				if time.Now().After(expiry) {
+					delete(store, key)
+					delete(expiries, key)
+					conn.Write([]byte("$-1\r\n"))
+					return
+				}
+			}
+
 			val, exists := store[key]
 			if !exists {
 				conn.Write([]byte("$-1\r\n"))
@@ -84,6 +96,7 @@ func handleConcurrent(conn net.Conn) {
 			}
 			response := fmt.Sprintf("$%d\r\n%s\r\n", len(val), val)
 			conn.Write([]byte(response))
+
 		case "SET":
 			if len(tokens) < 3 {
 				conn.Write([]byte("-ERR wrong number of arguments for 'SET'\r\n"))
@@ -92,6 +105,16 @@ func handleConcurrent(conn net.Conn) {
 			key := tokens[1]
 			val := tokens[2]
 			store[key] = val
+
+			if len(tokens) == 5 && strings.ToUpper(tokens[3]) == "PX" {
+
+				ms, err := strconv.Atoi(tokens[4])
+				if err == nil {
+					expiries[key] = time.Now().Add(time.Duration(ms) * time.Millisecond)
+				}
+
+			}
+
 			conn.Write([]byte("+OK\r\n"))
 
 		default:
