@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"flag"
 	"fmt"
 	"net"
 	"os"
@@ -10,13 +11,16 @@ import (
 	"time"
 )
 
+var dir = flag.String("dir", "", "Path to data directory")
+var dbfilename = flag.String("dbfilename", "", "Name of RDB file")
+
 func parseResp(reader *bufio.Reader) ([]string, error) {
 	line, err := reader.ReadString('\n')
 	if err != nil {
 		return nil, err
 	}
 	line = strings.TrimSpace(line)
-	fmt.Println(line)
+
 	if !strings.HasPrefix(line, "*") {
 		return nil, fmt.Errorf("invalid RESP array: %s", line)
 	}
@@ -50,17 +54,19 @@ func handleConcurrent(conn net.Conn) {
 
 	var store = make(map[string]string)
 	var expiries = make(map[string]time.Time)
+
 	reader := bufio.NewReader(conn)
 
 	for {
 		tokens, err := parseResp(reader)
+
 		if err != nil {
 			return
 		}
 		if len(tokens) == 0 {
 			continue
 		}
-		//fmt.Println(tokens)
+
 		switch strings.ToUpper(tokens[0]) {
 		case "PING":
 			conn.Write([]byte("+PONG\r\n"))
@@ -117,6 +123,25 @@ func handleConcurrent(conn net.Conn) {
 
 			conn.Write([]byte("+OK\r\n"))
 
+		case "CONFIG":
+
+			if len(tokens) >= 3 && strings.ToUpper(tokens[1]) == "GET" {
+				param := tokens[2]
+				var val string
+				switch param {
+				case "dir":
+					val = *dir
+				case "dbfilename":
+					val = *dbfilename
+				default:
+					conn.Write([]byte("*0\r\n"))
+					return
+				}
+
+				response := fmt.Sprintf("*2\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n", len(param), param, len(val), val)
+				conn.Write([]byte(response))
+			}
+
 		default:
 			conn.Write([]byte("-ERR unknown command\r\n"))
 		}
@@ -131,6 +156,9 @@ var _ = os.Exit
 func main() {
 	// You can use print statements as follows for debugging, they'll be visible when running tests.
 	fmt.Println("Logs from your program will appear here!")
+
+	// Prase the flag
+	flag.Parse()
 
 	// Uncomment this block to pass the first stage
 	//
