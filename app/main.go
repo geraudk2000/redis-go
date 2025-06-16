@@ -2,17 +2,26 @@ package main
 
 import (
 	"bufio"
+	"encoding/binary"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
 
+var _ = net.Listen
+var _ = os.Exit
 var dir = flag.String("dir", "", "Path to data directory")
 var dbfilename = flag.String("dbfilename", "", "Name of RDB file")
+
+var store = make(map[string]string)
+var expiries = make(map[string]time.Time)
 
 func parseResp(reader *bufio.Reader) ([]string, error) {
 	line, err := reader.ReadString('\n')
@@ -49,11 +58,26 @@ func parseResp(reader *bufio.Reader) ([]string, error) {
 
 }
 
+func globToRegex(glob string) string {
+	var re strings.Builder
+	re.WriteString("^")
+
+	for _, ch := range glob {
+		switch ch {
+		case '*':
+			re.WriteString(".*")
+		case '?':
+			re.WriteString(".")
+		default:
+			re.WriteRune(ch)
+		}
+	}
+	re.WriteString("$")
+	return re.String()
+}
+
 func handleConcurrent(conn net.Conn) {
 	defer conn.Close()
-
-	var store = make(map[string]string)
-	var expiries = make(map[string]time.Time)
 
 	reader := bufio.NewReader(conn)
 
@@ -142,6 +166,26 @@ func handleConcurrent(conn net.Conn) {
 				conn.Write([]byte(response))
 			}
 
+		case "KEYS":
+			if len(tokens) == 2 {
+				pattern := tokens[1]
+				regex := regexp.MustCompile(globToRegex(pattern))
+
+				matched := []string{}
+				for key := range store {
+					if regex.MatchString(key) {
+						matched = append(matched, key)
+					}
+				}
+				response := fmt.Sprintf("*%d\r\n", len(matched))
+				for _, k := range matched {
+					response += fmt.Sprintf("$%d\r\n%s\r\n", len(k), k)
+				}
+				conn.Write([]byte(response))
+			} else {
+				conn.Write([]byte("-ERR wrong number of arguments for 'KEYS'\r\n"))
+			}
+
 		default:
 			conn.Write([]byte("-ERR unknown command\r\n"))
 		}
@@ -149,9 +193,92 @@ func handleConcurrent(conn net.Conn) {
 
 }
 
+func readLength(r io.Reader) (int, error) {
+
+	first := make([]byte, 1)
+	_, err := io.ReadFull(r, first)
+	if err != nil {
+		return 0, nil
+	}
+
+	prefix := first[0] >> 6
+	switch prefix {
+	case 0:
+		return int(first[0] & 0x3F), nil
+	case 1:
+		next := make([]byte, 1)
+		io.ReadFull(r, next)
+		return int(first[0]&0x3F)<<8 | int(next[0]), nil
+	case 2:
+		buf := make([]byte, 4)
+		io.ReadFull(r, buf)
+		return int(binary.BigEndian.Uint32(buf)), nil
+	default:
+		return 0, fmt.Errorf("unsupported length encoding")
+	}
+
+}
+
+func readString(r io.Reader) ([]byte, error) {
+	length, err := readLength(r)
+	if err != nil {
+		return nil, err
+	}
+	buf := make([]byte, length)
+	_, err = io.ReadFull(r, buf)
+	return buf, err
+}
+
+func loadRDB(file *os.File) error {
+
+	reader := bufio.NewReader(file)
+	header := make([]byte, 9)
+	if _, err := io.ReadFull(reader, header); err != nil {
+		return err
+	}
+	if string(header) != "REDIS0011" {
+		return fmt.Errorf("invalid RDB header")
+
+	}
+	// skip metadata
+
+	for {
+		b, err := reader.ReadByte()
+		if err != nil {
+			return err
+		}
+		if b != 0xFA {
+			reader.UnreadByte()
+			break
+		}
+		// Read and discard metadata key + value
+		_, _ = readString(reader)
+		_, _ = readString(reader)
+
+	}
+	// databae selector (0xFE)
+	b, _ := reader.ReadByte()
+	if b != 0xFE {
+		return fmt.Errorf("expected 0xFE")
+	}
+	_, _ = readLength(reader) // db index
+
+	if marker, _ := reader.ReadByte(); marker == 0xFB {
+		_, _ = readLength(reader)
+		_, _ = readLength(reader)
+	}
+
+	// Parse one key
+	_, _ = reader.ReadByte()
+	key, _ := readString(reader)
+	val, _ := readString(reader)
+
+	store[string(key)] = string(val)
+	return nil
+
+}
+
 // Ensures gofmt doesn't remove the "net" and "os" imports in stage 1 (feel free to remove this!)
-var _ = net.Listen
-var _ = os.Exit
 
 func main() {
 	// You can use print statements as follows for debugging, they'll be visible when running tests.
@@ -159,6 +286,16 @@ func main() {
 
 	// Prase the flag
 	flag.Parse()
+
+	filename := filepath.Join(*dir, *dbfilename)
+	file, err := os.Open(filename)
+	if err == nil {
+		defer file.Close()
+		err = loadRDB(file)
+		if err != nil {
+			fmt.Println("Failed to load RDB:", err)
+		}
+	}
 
 	// Uncomment this block to pass the first stage
 	//
