@@ -203,23 +203,52 @@ func readLength(r io.Reader) (int, error) {
 
 	prefix := first[0] >> 6
 	switch prefix {
-	case 0:
+	case 0b00:
 		return int(first[0] & 0x3F), nil
-	case 1:
+	case 0b01:
 		next := make([]byte, 1)
 		io.ReadFull(r, next)
 		return int(first[0]&0x3F)<<8 | int(next[0]), nil
-	case 2:
+	case 0b10:
 		buf := make([]byte, 4)
 		io.ReadFull(r, buf)
 		return int(binary.BigEndian.Uint32(buf)), nil
+	case 0b11:
+		return 0, fmt.Errorf("readLength: got special string encoding prefix (0b11), should be handled in readString")
 	default:
 		return 0, fmt.Errorf("unsupported length encoding")
 	}
 
 }
 
-func readString(r io.Reader) ([]byte, error) {
+func readString(r *bufio.Reader) ([]byte, error) {
+	b, err := r.Peek(1)
+	if err != nil {
+		return nil, err
+	}
+	if b[0]>>6 == 0b11 {
+		r.ReadByte()
+		typ := b[0] & 0x3F
+		switch typ {
+		case 0:
+			val, _ := r.ReadByte()
+			return []byte(strconv.Itoa(int(val))), nil
+		case 1:
+			buf := make([]byte, 2)
+			io.ReadFull(r, buf)
+			val := binary.LittleEndian.Uint16(buf)
+			return []byte(strconv.Itoa(int(val))), nil
+		case 2:
+			buf := make([]byte, 4)
+			io.ReadFull(r, buf)
+			val := binary.LittleEndian.Uint32(buf)
+			return []byte(strconv.Itoa(int(val))), nil
+		default:
+			return nil, fmt.Errorf("unsupported special encoding: 0x%x", typ)
+
+		}
+	}
+
 	length, err := readLength(r)
 	if err != nil {
 		return nil, err
@@ -227,6 +256,7 @@ func readString(r io.Reader) ([]byte, error) {
 	buf := make([]byte, length)
 	_, err = io.ReadFull(r, buf)
 	return buf, err
+
 }
 
 func loadRDB(file *os.File) error {
@@ -252,8 +282,15 @@ func loadRDB(file *os.File) error {
 			break
 		}
 		// Read and discard metadata key + value
-		_, _ = readString(reader)
-		_, _ = readString(reader)
+		_, err = readString(reader)
+		if err != nil {
+			return err
+		}
+
+		_, err = readString(reader)
+		if err != nil {
+			return err
+		}
 
 	}
 	// databae selector (0xFE)
