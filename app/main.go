@@ -244,6 +244,7 @@ func readString(r *bufio.Reader) ([]byte, error) {
 			val := binary.LittleEndian.Uint32(buf)
 			return []byte(strconv.Itoa(int(val))), nil
 		default:
+			fmt.Printf("readString: got unknown special encoding type 0x%X\n", typ)
 			return nil, fmt.Errorf("unsupported special encoding: 0x%x", typ)
 
 		}
@@ -294,23 +295,61 @@ func loadRDB(file *os.File) error {
 
 	}
 	// databae selector (0xFE)
-	b, _ := reader.ReadByte()
+	//
+	b, err := reader.ReadByte()
+	if err != nil {
+		return err
+	}
 	if b != 0xFE {
-		return fmt.Errorf("expected 0xFE")
+		return fmt.Errorf("expected 0xFE but got 0x%x", b)
 	}
-	_, _ = readLength(reader) // db index
-
-	if marker, _ := reader.ReadByte(); marker == 0xFB {
-		_, _ = readLength(reader)
-		_, _ = readLength(reader)
+	_, err = readLength(reader) // DB index
+	if err != nil {
+		return err
 	}
 
-	// Parse one key
-	_, _ = reader.ReadByte()
-	key, _ := readString(reader)
-	val, _ := readString(reader)
+	// Expect 0xFB (hash table sizes)
+	b, err = reader.ReadByte()
+	if err != nil {
+		return err
+	}
+	if b != 0xFB {
+		return fmt.Errorf("expected 0xFB but got 0x%x", b)
+	}
+	_, err = readLength(reader) // key-value pair count
+	if err != nil {
+		return err
+	}
+	_, err = readLength(reader) // number of expiring keys
+	if err != nil {
+		return err
+	}
 
-	store[string(key)] = string(val)
+	// Read all key-value pairs until 0xFF (EOF)
+	for {
+		b, err := reader.Peek(1)
+		if err != nil {
+			break
+		}
+		if b[0] == 0xFF {
+			break
+		}
+
+		key, err := readString(reader)
+		if err != nil {
+			return err
+		}
+		if len(key) == 0 {
+			continue // skip blank/bad keys
+		}
+		val, err := readString(reader)
+		if err != nil {
+			return err
+		}
+
+		store[string(key)] = string(val)
+	}
+
 	return nil
 
 }
