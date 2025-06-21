@@ -115,15 +115,16 @@ func handleConcurrent(conn net.Conn) {
 					delete(store, key)
 					delete(expiries, key)
 					conn.Write([]byte("$-1\r\n"))
-					return
+					break
 				}
 			}
 
 			val, exists := store[key]
 			if !exists {
 				conn.Write([]byte("$-1\r\n"))
-				return
+				break
 			}
+
 			response := fmt.Sprintf("$%d\r\n%s\r\n", len(val), val)
 			conn.Write([]byte(response))
 
@@ -283,11 +284,14 @@ func loadRDB(file *os.File) error {
 			break
 		}
 		// Read and discard metadata key + value
+
+		// Read the value
 		_, err = readString(reader)
 		if err != nil {
 			return err
 		}
 
+		// Read the key
 		_, err = readString(reader)
 		if err != nil {
 			return err
@@ -334,6 +338,31 @@ func loadRDB(file *os.File) error {
 		if b[0] == 0xFF {
 			break
 		}
+		// Handle optional expiry
+
+		var expiry time.Time
+
+		b, _ = reader.Peek(1)
+		switch b[0] {
+		case 0xFC:
+			reader.ReadByte() // consume 0xFC
+			ts := make([]byte, 8)
+			io.ReadFull(reader, ts)
+			ms := binary.LittleEndian.Uint64(ts)
+			expiry = time.UnixMilli(int64(ms))
+		case 0xFD:
+			reader.ReadByte()
+			ts := make([]byte, 4)
+			io.ReadFull(reader, ts)
+			sec := binary.LittleEndian.Uint32(ts)
+			expiry = time.Unix(int64(sec), 0)
+		}
+		// value type
+
+		typ, _ := reader.ReadByte()
+		if typ != 0x00 {
+			return fmt.Errorf("unsupported value type: 0x%x", typ)
+		}
 
 		key, err := readString(reader)
 		if err != nil {
@@ -348,6 +377,9 @@ func loadRDB(file *os.File) error {
 		}
 
 		store[string(key)] = string(val)
+		if !expiry.IsZero() {
+			expiries[string(key)] = expiry
+		}
 	}
 
 	return nil
