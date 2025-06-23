@@ -19,6 +19,7 @@ var _ = net.Listen
 var _ = os.Exit
 var dir = flag.String("dir", "", "Path to data directory")
 var dbfilename = flag.String("dbfilename", "", "Name of RDB file")
+var port_replication = flag.String("port", "6380", "Replication port")
 
 var store = make(map[string]string)
 var expiries = make(map[string]time.Time)
@@ -407,19 +408,41 @@ func main() {
 
 	// Uncomment this block to pass the first stage
 	//
-	l, err := net.Listen("tcp", "0.0.0.0:6379")
+	l1, err := net.Listen("tcp", "0.0.0.0:6379")
 	if err != nil {
 		fmt.Println("Failed to bind to port 6379")
 		os.Exit(1)
 	}
+	fmt.Printf("Listening on 6379")
+
+	l2, err := net.Listen("tcp", "0.0.0.0:"+*port_replication)
+	if err != nil {
+		fmt.Println("Failed to bind to port 6380")
+		os.Exit(1)
+	}
+
+	// Start goroutine for first listener
+
+	go func() {
+
+		for {
+			conn, err := l1.Accept()
+			if err != nil {
+				fmt.Println("Error accepting connection: ", err.Error())
+				continue
+			}
+			go handleConcurrent(conn)
+		}
+
+	}()
+
 	for {
-		conn, err := l.Accept()
+		conn, err := l2.Accept()
 		if err != nil {
-			fmt.Println("Error accepting connection: ", err.Error())
+			fmt.Println("Error acception connection:", err.Error())
 			continue
 		}
-		go handleConcurrent(conn)
-
+		go handleReplication(conn)
 	}
 
 }
