@@ -16,7 +16,8 @@ var _ = net.Listen
 var _ = os.Exit
 var dir = flag.String("dir", "", "Path to data directory")
 var dbfilename = flag.String("dbfilename", "", "Name of RDB file")
-var port_replication = flag.String("port", "6380", "Replication port")
+var port = flag.String("port", "6379", "Port to listen on")
+var replicaof = flag.String("replicaof", "", "host and port of the master")
 
 var store = make(map[string]string)
 var expiries = make(map[string]time.Time)
@@ -78,7 +79,7 @@ func globToRegex(glob string) string {
 
 func main() {
 	// You can use print statements as follows for debugging, they'll be visible when running tests.
-	fmt.Println("Logs from your program will appear here!")
+	//fmt.Println("Logs from your program will appear here!")
 
 	// Prase the flag
 	flag.Parse()
@@ -93,20 +94,12 @@ func main() {
 		}
 	}
 
-	// Uncomment this block to pass the first stage
-	//
-	l1, err := net.Listen("tcp", "0.0.0.0:6379")
+	l1, err := net.Listen("tcp", "0.0.0.0:"+*port)
 	if err != nil {
-		fmt.Println("Failed to bind to port 6379")
+		fmt.Printf("Failed to bind to port %s\n", *port)
 		os.Exit(1)
 	}
-	fmt.Printf("Listening on 6379")
-
-	l2, err := net.Listen("tcp", "0.0.0.0:"+*port_replication)
-	if err != nil {
-		fmt.Println("Failed to bind to port 6380")
-		os.Exit(1)
-	}
+	fmt.Printf("Listening on %s", *port)
 
 	// Start goroutine for first listener
 
@@ -123,13 +116,31 @@ func main() {
 
 	}()
 
-	for {
-		conn, err := l2.Accept()
-		if err != nil {
-			fmt.Println("Error acception connection:", err.Error())
-			continue
+	if *replicaof != "" {
+		parts := strings.Split(*replicaof, " ")
+		if len(parts) != 2 {
+			fmt.Println("Invalide --replicaof format, expected 'host port'")
+			os.Exit(1)
 		}
-		go handleReplication(conn)
+
+		host, masterPort := parts[0], parts[1]
+
+		go func() {
+			for {
+				conn, err := net.Dial("tcp", host+":"+masterPort)
+				if err != nil {
+					fmt.Println("Failed to connect to master, retrying...")
+					time.Sleep(2 * time.Second)
+					continue
+				}
+				fmt.Println("Connected to master:", host+":"+masterPort)
+				handleMasterConnection(conn)
+				//conn.Close()
+				//break
+			}
+		}()
 	}
+
+	select {}
 
 }

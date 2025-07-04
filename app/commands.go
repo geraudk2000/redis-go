@@ -123,7 +123,11 @@ func handleConcurrent(conn net.Conn) {
 		case "INFO":
 			if len(tokens) >= 2 && strings.ToUpper(tokens[1]) == "REPLICATION" {
 
-				info := "role:master"
+				role := "master"
+				if *replicaof != "" {
+					role = "slave"
+				}
+				info := fmt.Sprintf("role:%s\r\n", role)
 
 				// RESP Bulk String:
 				response := fmt.Sprintf("$%d\r\n%s", len(info), info)
