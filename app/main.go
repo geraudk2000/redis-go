@@ -134,7 +134,8 @@ func main() {
 					continue
 				}
 				fmt.Println("Connected to master:", host+":"+masterPort)
-				handleMasterConnection(conn)
+				handleConcurrent(conn)
+				//handleMasterConnection(conn)
 				//conn.Close()
 				//break
 			}

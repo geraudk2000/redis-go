@@ -2,6 +2,8 @@ package main
 
 import (
 	"bufio"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"regexp"
@@ -9,6 +11,15 @@ import (
 	"strings"
 	"time"
 )
+
+func generateReplID() string {
+	b := make([]byte, 20)
+	_, err := rand.Read(b)
+	if err != nil {
+		panic(err)
+	}
+	return hex.EncodeToString(b)
+}
 
 func handleConcurrent(conn net.Conn) {
 	defer conn.Close()
@@ -127,11 +138,14 @@ func handleConcurrent(conn net.Conn) {
 				if *replicaof != "" {
 					role = "slave"
 				}
-				info := fmt.Sprintf("role:%s\r\n", role)
+				master_replid := generateReplID()
+				master_repl_offset := 0
 
-				// RESP Bulk String:
-				response := fmt.Sprintf("$%d\r\n%s", len(info), info)
-				conn.Write([]byte(response + "\r\n"))
+				info := fmt.Sprintf("role:%s\r\nmaster_replid:%s\r\nmaster_repl_offset:%d\r\n",
+					role, master_replid, master_repl_offset)
+
+				response := fmt.Sprintf("$%d\r\n%s\r\n", len(info), info)
+				conn.Write([]byte(response))
 
 			} else {
 				conn.Write([]byte("-ERR wrong arguments\r\n"))
