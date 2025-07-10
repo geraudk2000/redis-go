@@ -134,6 +134,7 @@ func main() {
 					continue
 				}
 				fmt.Println("Connected to master:", host+":"+masterPort)
+				fmt.Fprintf(conn, "*1\r\n$4\r\nPING\r\n")
 				handleConcurrent(conn)
 				//handleMasterConnection(conn)
 				//conn.Close()
