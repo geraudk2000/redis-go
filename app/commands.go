@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+var globalReplID = generateReplID()
+
 func generateReplID() string {
 	b := make([]byte, 20)
 	_, err := rand.Read(b)
@@ -138,7 +140,7 @@ func handleConcurrent(conn net.Conn) {
 				if *replicaof != "" {
 					role = "slave"
 				}
-				master_replid := generateReplID()
+				master_replid := globalReplID
 				master_repl_offset := 0
 
 				info := fmt.Sprintf("role:%s\r\nmaster_replid:%s\r\nmaster_repl_offset:%d\r\n",
@@ -150,6 +152,11 @@ func handleConcurrent(conn net.Conn) {
 			} else {
 				conn.Write([]byte("-ERR wrong arguments\r\n"))
 			}
+		case "REPLCONF":
+			conn.Write([]byte("+OK\r\n"))
+		case "PSYNC":
+			replID := globalReplID
+			conn.Write([]byte("+FULLRESYNC " + replID + " 0\r\n"))
 
 		default:
 			conn.Write([]byte("-ERR unknown command\r\n"))
