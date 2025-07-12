@@ -135,7 +135,18 @@ func main() {
 				}
 				fmt.Println("Connected to master:", host+":"+masterPort)
 				fmt.Fprintf(conn, "*1\r\n$4\r\nPING\r\n")
-				handleConcurrent(conn)
+
+				reader := bufio.NewReader(conn)
+				line, err := reader.ReadString('\n')
+				if err != nil || !strings.HasPrefix(line, "+PONG") {
+					fmt.Println("Failed to receive PONG from master:", err)
+					conn.Close()
+					return
+				}
+
+				fmt.Fprintf(conn, "*3\r\n$8\r\nREPLCONF\r\n$14\r\nlistening-port\r\n$%d\r\n%s\r\n", len(*port), *port)
+				fmt.Fprintf(conn, "*3\r\n$8\r\nREPLCONF\r\n$4\r\ncapa\r\n$6\r\npsync2\r\n")
+				//handleConcurrent(conn)
 				//handleMasterConnection(conn)
 				//conn.Close()
 				//break
